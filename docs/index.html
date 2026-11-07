@@ -167,7 +167,7 @@ async function finalize(){
 function viewList(){
   const iso=jdn2iso(av),L=db.appts.filter(a=>a.date===iso).sort((a,b)=>a.time.localeCompare(b.time));
   let h='<div class="card nav"><button onclick="av--;render()">روز قبل</button><b>'+fullJ(av)+'</b><button onclick="av++;render()">روز بعد</button></div>';
-  h+='<div class="card"><button style="width:100%;margin-bottom:6px" onclick="av=todayJdn();render()">برو به امروز</button>';
+  h+='<div class="card"><button style="width:100%;margin-bottom:8px" onclick="av=todayJdn();render()">برو به امروز</button><div class="acts" style="margin:0 0 8px"><button style="flex:1" onclick="exportDay(\'pdf\')">خروجی PDF</button><button style="flex:1" onclick="exportDay(\'img\')">خروجی عکس</button></div>';
   if(!L.length)h+='<p class="empty">نوبتی برای این روز نیست.</p>';
   L.forEach(a=>{h+='<div class="item"><b>'+fa(a.time)+'</b> — '+esc(a.first+' '+a.last)+'<div class="muted">'+esc(a.doctorName)+' | '+esc(a.ins)+' | '+fa(a.phone)+'<br>کد ملی: '+fa(a.nid)+' | '+smsLabel(a.sms)+'</div><div class="acts"><button onclick="resend(\''+a.id+'\')">ارسال مجدد پیامک</button><button class="danger" onclick="cancelAppt(\''+a.id+'\')">لغو نوبت</button></div></div>'});
   return h+'</div>';
@@ -212,6 +212,89 @@ function saveDoc(){
 }
 function editDoc(id){const d=db.doctors.find(x=>x.id===id);df=JSON.parse(JSON.stringify(d));df.schedule.forEach(e=>{delete e.week});window.scrollTo(0,0);render()}
 function delDoc(id){if(!confirm('این پزشک حذف شود؟ نوبت‌های قبلی او می‌مانند.'))return;db.doctors=db.doctors.filter(d=>d.id!==id);if(bk.doc===id)bk.doc='';save();render()}
+
+// ---------- export (PDF / image)
+const b64=u=>{let s='';for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s)};
+const fromB64=s=>{const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u};
+function buildPdf(jpegs){
+  const enc=new TextEncoder(),parts=[],offs=[];let len=0;
+  const push=b=>{if(typeof b==='string')b=enc.encode(b);parts.push(b);len+=b.length};
+  const n=jpegs.length;
+  push('%PDF-1.4\n');
+  offs[1]=len;push('1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n');
+  offs[2]=len;push('2 0 obj\n<</Type/Pages/Count '+n+'/Kids['+jpegs.map((_,i)=>(3+3*i)+' 0 R').join(' ')+']>>\nendobj\n');
+  jpegs.forEach((j,i)=>{
+    const p=3+3*i,c=p+1,im=p+2,cs='q 595 0 0 842 0 0 cm /Im0 Do Q';
+    offs[p]=len;push(p+' 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]/Resources<</XObject<</Im0 '+im+' 0 R>>>>/Contents '+c+' 0 R>>\nendobj\n');
+    offs[c]=len;push(c+' 0 obj\n<</Length '+cs.length+'>>\nstream\n'+cs+'\nendstream\nendobj\n');
+    offs[im]=len;push(im+' 0 obj\n<</Type/XObject/Subtype/Image/Width '+j.w+'/Height '+j.h+'/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length '+j.data.length+'>>\nstream\n');push(j.data);push('\nendstream\nendobj\n');
+  });
+  const total=2+3*n,xr=len;
+  let x='xref\n0 '+(total+1)+'\n0000000000 65535 f \n';
+  for(let k=1;k<=total;k++)x+=String(offs[k]).padStart(10,'0')+' 00000 n \n';
+  x+='trailer\n<</Size '+(total+1)+'/Root 1 0 R>>\nstartxref\n'+xr+'\n%%EOF';
+  push(x);
+  const out=new Uint8Array(len);let o=0;for(const q of parts){out.set(q,o);o+=q.length}return out;
+}
+function renderPages(j){
+  const iso=jdn2iso(j),L=db.appts.filter(a=>a.date===iso);
+  if(!L.length)return null;
+  const groups={};L.forEach(a=>{(groups[a.doctorName]=groups[a.doctorName]||[]).push(a)});
+  const names=Object.keys(groups).sort();
+  const W=1240,H=1754,M=50,RH=54,F='"Vazirmatn",Tahoma,"Noto Naskh Arabic",sans-serif';
+  const cols=[['ردیف',70],['ساعت',110],['نام بیمار',340],['کد ملی',190],['بیمه',190],['تلفن',240]];
+  const pages=[];let cv,cx,y;
+  const txt=(t,xc,yc,font,color,al)=>{cx.font=font;cx.fillStyle=color;cx.textAlign=al||'center';cx.fillText(t,xc,yc)};
+  const np=()=>{cv=document.createElement('canvas');cv.width=W;cv.height=H;cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,W,H);cx.direction='rtl';cx.textBaseline='middle';pages.push(cv);
+    txt('نوبت‌های '+fullJ(j),W-M,M+30,'bold 36px '+F,'#0f172a','right');
+    txt(db.clinic,M,M+30,'24px '+F,'#475569','left');y=M+84};
+  const row=(vals,fill,font,color)=>{cx.fillStyle=fill;cx.fillRect(M,y,W-2*M,RH);cx.strokeStyle='#cbd5e1';cx.lineWidth=1;cx.strokeRect(M,y,W-2*M,RH);
+    let xr=W-M;cols.forEach((c,i)=>{txt(String(vals[i]),xr-c[1]/2,y+RH/2,font,color);xr-=c[1];if(i<cols.length-1){cx.beginPath();cx.moveTo(xr,y);cx.lineTo(xr,y+RH);cx.stroke()}});y+=RH};
+  const head=(name,cont)=>{cx.fillStyle='#0f766e';cx.fillRect(M,y,W-2*M,RH+4);txt(name+(cont?' (ادامه)':''),W-M-16,y+RH/2+2,'bold 28px '+F,'#fff','right');y+=RH+4;row(cols.map(c=>c[0]),'#e2e8f0','bold 24px '+F,'#0f172a')};
+  const limit=H-M-50;
+  np();
+  names.forEach(name=>{
+    const arr=groups[name].sort((a,b)=>a.time.localeCompare(b.time));
+    if(y+RH*3+4>limit)np();
+    head(name+' — '+fa(arr.length)+' نوبت',false);
+    arr.forEach((a,i)=>{
+      if(y+RH>limit){np();head(name,true)}
+      row([fa(i+1),fa(a.time),a.first+' '+a.last,fa(a.nid),a.ins,fa(a.phone)],i%2?'#f8fafc':'#fff','26px '+F,'#0f172a');
+    });
+    y+=24;
+  });
+  if(y+40>limit+30)np();
+  txt('جمع کل نوبت‌ها: '+fa(L.length),W-M,y+10,'bold 26px '+F,'#0f172a','right');
+  const endY=y+50;
+  if(pages.length>1)pages.forEach((c,i)=>{const g=c.getContext('2d');g.direction='rtl';g.textBaseline='middle';g.fillStyle='#64748b';g.font='20px '+F;g.textAlign='center';g.fillText('صفحه '+fa(i+1)+' از '+fa(pages.length),W/2,H-30)});
+  return{pages,endY};
+}
+async function deliver(name,mime,data){
+  const C=window.Capacitor;
+  if(C&&C.isNativePlatform&&C.isNativePlatform()){
+    try{
+      const P=C.Plugins;
+      const r=await P.Filesystem.writeFile({path:name,data,directory:'CACHE'});
+      await P.Share.share({title:name,files:[r.uri],dialogTitle:'ذخیره یا ارسال فایل'});
+    }catch(e){const m=String((e&&e.message)||e);if(!/cancel/i.test(m))toast('خطا: '+m)}
+    return;
+  }
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([fromB64(data)],{type:mime}));a.download=name;document.body.appendChild(a);a.click();a.remove();
+}
+async function exportDay(kind){
+  const r=renderPages(av);
+  if(!r)return toast('برای این روز نوبتی نیست');
+  const x=d2j(av),base='nobat-'+x.jy+'-'+String(x.jm).padStart(2,'0')+'-'+String(x.jd).padStart(2,'0');
+  if(kind==='pdf'){
+    const jp=r.pages.map(c=>({data:fromB64(c.toDataURL('image/jpeg',0.92).split(',')[1]),w:c.width,h:c.height}));
+    await deliver(base+'.pdf','application/pdf',b64(buildPdf(jp)));
+  }else{
+    let out;
+    if(r.pages.length===1){const h=Math.min(1754,r.endY);out=document.createElement('canvas');out.width=1240;out.height=h;out.getContext('2d').drawImage(r.pages[0],0,0,1240,h,0,0,1240,h)}
+    else{out=document.createElement('canvas');out.width=1240;out.height=1754*r.pages.length;const g=out.getContext('2d');r.pages.forEach((c,i)=>g.drawImage(c,0,1754*i))}
+    await deliver(base+'.png','image/png',out.toDataURL('image/png').split(',')[1]);
+  }
+}
 
 // ---------- settings
 function viewSet(){
