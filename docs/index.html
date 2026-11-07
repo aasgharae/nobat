@@ -106,12 +106,12 @@ async function sendSms(phone,text){
   const C=window.Capacitor;
   if(C&&C.isNativePlatform&&C.isNativePlatform()){
     try{smsPlugin=smsPlugin||C.registerPlugin('SmsSender');await smsPlugin.send({phone,message:text});return'sent'}
-    catch(e){return'error'}
+    catch(e){return'error: '+((e&&e.message)||e)}
   }
   location.href='sms:'+phone+'?body='+encodeURIComponent(text);return'opened';
 }
 function smsText(a){return db.tpl.split('{name}').join(a.first+' '+a.last).split('{doctor}').join(a.doctorName).split('{date}').join(fullJ(iso2jdn(a.date))).split('{time}').join(fa(a.time)).split('{clinic}').join(db.clinic)}
-const smsLabel=s=>s==='sent'?'پیامک ارسال شد':s==='opened'?'پیامک آماده ارسال (دستی)':s==='error'?'ارسال پیامک ناموفق':'پیامک ارسال نشده';
+const smsLabel=s=>s==='sent'?'پیامک ارسال شد':s==='opened'?'پیامک آماده ارسال (دستی)':String(s).startsWith('error')?'ناموفق: '+String(s).slice(7):'پیامک ارسال نشده';
 
 // ---------- booking
 function pickDoc(v){bk.doc=v;bk.j=null;bk.time=null;render()}
