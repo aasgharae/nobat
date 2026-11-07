@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>نوبت‌دهی کلینیک</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Tahoma,Vazirmatn,sans-serif;background:#f1f5f4;color:#0f172a;padding-bottom:76px}
+header{background:#0f766e;color:#fff;padding:14px 16px;position:sticky;top:0;z-index:5}
+header h1{margin:0;font-size:18px}
+main{padding:12px;max-width:640px;margin:auto}
+.card{background:#fff;border-radius:14px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px #0001}
+h2{font-size:16px;margin:0 0 10px}h3{font-size:14px;margin:14px 0 8px;color:#475569}
+input,select,textarea{width:100%;padding:11px;margin-bottom:8px;border:1px solid #cbd5e1;border-radius:10px;font:inherit;background:#fff}
+textarea{min-height:110px}
+button{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:#e2e8f0;color:#0f172a}
+button.primary{background:#0f766e;color:#fff;width:100%;padding:13px;font-weight:bold}
+button.danger{background:#fee2e2;color:#b91c1c}
+button:disabled{opacity:.35}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{background:#f1f5f9;border:1px solid #cbd5e1}
+.chip.on{background:#0f766e;color:#fff;border-color:#0f766e}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;padding:8px;background:#f8fafc;border-radius:10px}
+.row select,.row input{width:auto;flex:1;min-width:90px;margin:0}
+.item{border-bottom:1px solid #e2e8f0;padding:10px 0}
+.item:last-child{border:0}
+.muted{color:#64748b;font-size:13px}
+.empty{color:#64748b;text-align:center;padding:12px}
+.acts{display:flex;gap:8px;margin-top:8px}
+.nav{display:flex;gap:8px;align-items:center;justify-content:space-between}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#fff;border-top:1px solid #e2e8f0;padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;border-radius:0;background:#fff;padding:14px 4px;font-size:13px}
+nav button.on{color:#0f766e;font-weight:bold;border-top:3px solid #0f766e}
+#ov{position:fixed;inset:0;background:#0008;display:none;align-items:flex-end;z-index:20}
+#ov .sheet{background:#fff;width:100%;max-width:640px;margin:auto;border-radius:18px 18px 0 0;padding:18px}
+#toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:10px 16px;border-radius:20px;display:none;z-index:30;max-width:90%;text-align:center}
+</style>
+</head>
+<body>
+<header><h1>نوبت‌دهی کلینیک</h1></header>
+<main id="app"></main>
+<nav>
+<button data-t="book" onclick="go('book')">نوبت جدید</button>
+<button data-t="list" onclick="go('list')">نوبت‌ها</button>
+<button data-t="docs" onclick="go('docs')">پزشکان</button>
+<button data-t="set" onclick="go('set')">تنظیمات</button>
+</nav>
+<div id="ov"></div><div id="toast"></div>
+<script>
+//LIB-START
+const DAYS=['شنبه','یکشنبه','دوشنبه','سه‌شنبه','چهارشنبه','پنجشنبه','جمعه'];
+const MONTHS=['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'];
+const SLOT=45;
+const FA='۰۱۲۳۴۵۶۷۸۹';
+const fa=s=>String(s).replace(/\d/g,d=>FA[d]);
+const en=s=>String(s).replace(/[۰-۹]/g,d=>FA.indexOf(d)).replace(/[٠-٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// ---- jalaali conversion (jalaali-js algorithm)
+const div=(a,b)=>~~(a/b), mod=(a,b)=>a-~~(a/b)*b;
+const BRK=[-61,9,38,199,426,686,756,818,1111,1181,1210,1635,2060,2097,2192,2262,2324,2394,2456,3178];
+function g2d(gy,gm,gd){let d=div((gy+div(gm-8,6)+100100)*1461,4)+div(153*mod(gm+9,12)+2,5)+gd-34840408;d=d-div(div(gy+100100+div(gm-8,6),100)*3,4)+752;return d}
+function d2g(j){let x=4*j+139361631;x=x+div(div(4*j+183187720,146097)*3,4)*4-3908;const i=div(mod(x,1461),4)*5+308;const gd=div(mod(i,153),5)+1,gm=mod(div(i,153),12)+1,gy=div(x,1461)-100100+div(8-gm,6);return{gy,gm,gd}}
+function jalCal(jy){const bl=BRK.length,gy=jy+621;let leapJ=-14,jp=BRK[0],jm,jump,n,i;for(i=1;i<bl;i++){jm=BRK[i];jump=jm-jp;if(jy<jm)break;leapJ=leapJ+div(jump,33)*8+div(mod(jump,33),4);jp=jm}n=jy-jp;leapJ=leapJ+div(n,33)*8+div(mod(n,33)+3,4);if(mod(jump,33)===4&&jump-n===4)leapJ+=1;const leapG=div(gy,4)-div((div(gy,100)+1)*3,4)-150;const march=20+leapJ-leapG;if(jump-n<6)n=n-jump+div(jump+4,33)*33;let leap=mod(mod(n+1,33)-1,4);if(leap===-1)leap=4;return{leap,gy,march}}
+function d2j(j){const gy=d2g(j).gy;let jy=gy-621;const r=jalCal(jy),f=g2d(gy,3,r.march);let k=j-f,jm,jd;if(k>=0){if(k<=185){jm=1+div(k,31);jd=mod(k,31)+1;return{jy,jm,jd}}k-=186}else{jy-=1;k+=179;if(r.leap===1)k+=1}jm=7+div(k,30);jd=mod(k,30)+1;return{jy,jm,jd}}
+// ---- dates
+const iso2jdn=s=>{const[a,b,c]=s.split('-').map(Number);return g2d(a,b,c)};
+const jdn2iso=j=>{const g=d2g(j);return g.gy+'-'+String(g.gm).padStart(2,'0')+'-'+String(g.gd).padStart(2,'0')};
+const todayJdn=()=>{const n=new Date();return g2d(n.getFullYear(),n.getMonth()+1,n.getDate())};
+const dowOf=j=>(j+2)%7; // 0=شنبه
+const shortJ=j=>{const x=d2j(j);return DAYS[dowOf(j)]+' '+fa(x.jd)+' '+MONTHS[x.jm-1]};
+const fullJ=j=>{const x=d2j(j);return DAYS[dowOf(j)]+' '+fa(x.jd)+' '+MONTHS[x.jm-1]+' '+fa(x.jy)};
+// ---- schedule logic
+const occurs=(e,j)=>{if(dowOf(j)!==e.dow)return false;if(!e.biweekly)return true;return(((j-iso2jdn(e.anchor))%14)+14)%14===0};
+const t2m=t=>{const[h,m]=t.split(':').map(Number);return h*60+m};
+const m2t=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+function slotsFor(doc,j){const out=[];doc.schedule.filter(e=>occurs(e,j)).forEach(e=>{for(let m=t2m(e.start);m+SLOT<=t2m(e.end);m+=SLOT)out.push(m2t(m))});return[...new Set(out)].sort()}
+function workDays(doc,from){const out=[];for(let j=from;j<from+45;j++)if(slotsFor(doc,j).length)out.push(j);return out}
+function computeAnchor(e){const t=todayJdn(),sat=t-dowOf(t);return jdn2iso(sat+e.dow+(e.week==='next'?7:0))}
+function nidOk(s){if(!/^\d{10}$/.test(s)||/^(\d)\1{9}$/.test(s))return false;let sum=0;for(let i=0;i<9;i++)sum+=(+s[i])*(10-i);const r=sum%11,c=+s[9];return r<2?c===r:c===11-r}
+function normPhone(p){p=en(p).replace(/[\s\-()]/g,'');if(p.startsWith('+98'))p='0'+p.slice(3);else if(p.startsWith('0098'))p='0'+p.slice(4);else if(p.startsWith('98')&&p.length===12)p='0'+p.slice(2);return/^09\d{9}$/.test(p)?p:null}
+//LIB-END
+
+const DEF_TPL='{name} عزیز\nنوبت شما نزد {doctor} در {date} ساعت {time} ثبت شد.\n{clinic}';
+let db;
+try{db=JSON.parse(localStorage.getItem('nobat_db'))}catch(e){}
+db=db||{};db.doctors=db.doctors||[];db.appts=db.appts||[];db.clinic=db.clinic||'کلینیک';db.tpl=db.tpl||DEF_TPL;
+const save=()=>{try{localStorage.setItem('nobat_db',JSON.stringify(db))}catch(e){toast('ذخیره‌سازی ناموفق بود')}};
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const docName=d=>'دکتر '+d.first+' '+d.last;
+
+let tab='book',av=todayJdn();
+let bk={doc:'',j:null,time:null,first:'',last:'',nid:'',ins:'آزاد',phone:''};
+let df={id:null,first:'',last:'',schedule:[]};
+
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',3200)}
+function go(t){tab=t;render()}
+function render(){const y=window.scrollY;document.getElementById('app').innerHTML=tab==='book'?viewBook():tab==='list'?viewList():tab==='docs'?viewDocs():viewSet();document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));window.scrollTo(0,y)}
+
+// ---------- SMS
+let smsPlugin=null;
+async function sendSms(phone,text){
+  const C=window.Capacitor;
+  if(C&&C.isNativePlatform&&C.isNativePlatform()){
+    try{smsPlugin=smsPlugin||C.registerPlugin('SmsSender');await smsPlugin.send({phone,message:text});return'sent'}
+    catch(e){return'error'}
+  }
+  location.href='sms:'+phone+'?body='+encodeURIComponent(text);return'opened';
+}
+function smsText(a){return db.tpl.split('{name}').join(a.first+' '+a.last).split('{doctor}').join(a.doctorName).split('{date}').join(fullJ(iso2jdn(a.date))).split('{time}').join(fa(a.time)).split('{clinic}').join(db.clinic)}
+const smsLabel=s=>s==='sent'?'پیامک ارسال شد':s==='opened'?'پیامک آماده ارسال (دستی)':s==='error'?'ارسال پیامک ناموفق':'پیامک ارسال نشده';
+
+// ---------- booking
+function pickDoc(v){bk.doc=v;bk.j=null;bk.time=null;render()}
+function pickDay(j){bk.j=j;bk.time=null;render()}
+function pickTime(t){bk.time=t;render()}
+function viewBook(){
+  if(!db.doctors.length)return'<div class="card empty">هنوز پزشکی ثبت نشده. از تب «پزشکان» اضافه کن.</div>';
+  const d=db.doctors.find(x=>x.id===bk.doc);
+  let h='<div class="card"><h2>مشخصات بیمار</h2>'
+  +'<input placeholder="نام" value="'+esc(bk.first)+'" oninput="bk.first=this.value">'
+  +'<input placeholder="نام خانوادگی" value="'+esc(bk.last)+'" oninput="bk.last=this.value">'
+  +'<input placeholder="کد ملی" inputmode="numeric" maxlength="10" value="'+esc(bk.nid)+'" oninput="bk.nid=this.value">'
+  +'<select onchange="bk.ins=this.value"><option'+(bk.ins==='آزاد'?' selected':'')+'>آزاد</option><option'+(bk.ins==='نیروهای مسلح'?' selected':'')+'>نیروهای مسلح</option></select>'
+  +'<input placeholder="شماره تماس" type="tel" inputmode="tel" value="'+esc(bk.phone)+'" oninput="bk.phone=this.value"></div>';
+  h+='<div class="card"><h2>پزشک و زمان</h2><select onchange="pickDoc(this.value)"><option value="">انتخاب پزشک…</option>'+db.doctors.map(x=>'<option value="'+x.id+'"'+(x.id===bk.doc?' selected':'')+'>'+esc(docName(x))+'</option>').join('')+'</select>';
+  if(d){
+    const days=workDays(d,todayJdn());
+    if(!days.length)h+='<p class="empty">برای این پزشک در ۴۵ روز آینده روز کاری تعریف نشده.</p>';
+    else h+='<h3>روز</h3><div class="chips">'+days.map(j=>'<button class="chip'+(j===bk.j?' on':'')+'" onclick="pickDay('+j+')">'+shortJ(j)+'</button>').join('')+'</div>';
+    if(bk.j!=null){
+      const taken=new Set(db.appts.filter(a=>a.doc===d.id&&a.date===jdn2iso(bk.j)).map(a=>a.time));
+      const n=new Date(),nm=n.getHours()*60+n.getMinutes(),isT=bk.j===todayJdn();
+      h+='<h3>ساعت (هر نوبت ۴۵ دقیقه، پر شده‌ها غیرفعال)</h3><div class="chips">'+slotsFor(d,bk.j).map(t=>{const dis=taken.has(t)||(isT&&t2m(t)<=nm);return'<button class="chip'+(t===bk.time?' on':'')+'"'+(dis?' disabled':'')+' onclick="pickTime(\''+t+'\')">'+fa(t)+'</button>'}).join('')+'</div>';
+    }
+  }
+  h+='</div><button class="primary" onclick="review()">بررسی و تایید نوبت</button>';
+  return h;
+}
+function review(){
+  const phone=normPhone(bk.phone),nid=en(bk.nid).trim();
+  if(!bk.first.trim()||!bk.last.trim())return toast('نام و نام خانوادگی را وارد کن');
+  if(!nidOk(nid))return toast('کد ملی معتبر نیست');
+  if(!phone)return toast('شماره تماس معتبر نیست (مثل ۰۹۱۲۱۲۳۴۵۶۷)');
+  const d=db.doctors.find(x=>x.id===bk.doc);
+  if(!d)return toast('پزشک را انتخاب کن');
+  if(bk.j==null||!bk.time)return toast('روز و ساعت را انتخاب کن');
+  const ov=document.getElementById('ov');
+  ov.innerHTML='<div class="sheet"><h2>تایید نهایی</h2><p>'+esc(bk.first+' '+bk.last)+'<br>کد ملی: '+fa(nid)+' — بیمه: '+esc(bk.ins)+'<br>تلفن: '+fa(phone)+'<br>'+esc(docName(d))+'<br>'+fullJ(bk.j)+' — ساعت '+fa(bk.time)+'</p><p class="muted">بعد از تایید، پیامک برای بیمار ارسال می‌شود.</p><div class="acts"><button class="primary" onclick="finalize()">تایید و ارسال پیامک</button><button onclick="closeOv()">برگشت</button></div></div>';
+  ov.style.display='flex';
+}
+function closeOv(){document.getElementById('ov').style.display='none'}
+async function finalize(){
+  const d=db.doctors.find(x=>x.id===bk.doc),date=jdn2iso(bk.j);
+  if(db.appts.some(a=>a.doc===d.id&&a.date===date&&a.time===bk.time)){closeOv();return toast('این ساعت همین الان پر شد')}
+  const a={id:uid(),doc:d.id,doctorName:docName(d),date,time:bk.time,first:bk.first.trim(),last:bk.last.trim(),nid:en(bk.nid).trim(),ins:bk.ins,phone:normPhone(bk.phone),sms:''};
+  db.appts.push(a);save();closeOv();
+  av=bk.j;bk={doc:'',j:null,time:null,first:'',last:'',nid:'',ins:'آزاد',phone:''};
+  tab='list';render();toast('نوبت ثبت شد');
+  a.sms=await sendSms(a.phone,smsText(a));save();render();toast(smsLabel(a.sms));
+}
+
+// ---------- list
+function viewList(){
+  const iso=jdn2iso(av),L=db.appts.filter(a=>a.date===iso).sort((a,b)=>a.time.localeCompare(b.time));
+  let h='<div class="card nav"><button onclick="av--;render()">روز قبل</button><b>'+fullJ(av)+'</b><button onclick="av++;render()">روز بعد</button></div>';
+  h+='<div class="card"><button style="width:100%;margin-bottom:6px" onclick="av=todayJdn();render()">برو به امروز</button>';
+  if(!L.length)h+='<p class="empty">نوبتی برای این روز نیست.</p>';
+  L.forEach(a=>{h+='<div class="item"><b>'+fa(a.time)+'</b> — '+esc(a.first+' '+a.last)+'<div class="muted">'+esc(a.doctorName)+' | '+esc(a.ins)+' | '+fa(a.phone)+'<br>کد ملی: '+fa(a.nid)+' | '+smsLabel(a.sms)+'</div><div class="acts"><button onclick="resend(\''+a.id+'\')">ارسال مجدد پیامک</button><button class="danger" onclick="cancelAppt(\''+a.id+'\')">لغو نوبت</button></div></div>'});
+  return h+'</div>';
+}
+async function resend(id){const a=db.appts.find(x=>x.id===id);if(!a)return;a.sms=await sendSms(a.phone,smsText(a));save();render();toast(smsLabel(a.sms))}
+function cancelAppt(id){if(!confirm('این نوبت لغو شود؟'))return;db.appts=db.appts.filter(x=>x.id!==id);save();render()}
+
+// ---------- doctors
+function newE(){return{dow:0,start:'09:00',end:'13:00',biweekly:false,week:'this'}}
+function setE(i,k,v){const e=df.schedule[i];e[k]=v;if(e.biweekly&&(k==='dow'||k==='biweekly'))e.week=e.week||'this';render()}
+function addE(){df.schedule.push(newE());render()}
+function delE(i){df.schedule.splice(i,1);render()}
+function viewDocs(){
+  let h='<div class="card"><h2>'+(df.id?'ویرایش پزشک':'ثبت پزشک جدید')+'</h2>'
+  +'<input placeholder="نام" value="'+esc(df.first)+'" oninput="df.first=this.value">'
+  +'<input placeholder="نام خانوادگی" value="'+esc(df.last)+'" oninput="df.last=this.value">'
+  +'<h3>روزها و ساعت حضور</h3>';
+  df.schedule.forEach((e,i)=>{
+    h+='<div class="row"><select onchange="setE('+i+',\'dow\',+this.value)">'+DAYS.map((n,k)=>'<option value="'+k+'"'+(k===e.dow?' selected':'')+'>'+n+'</option>').join('')+'</select>'
+    +'<input type="time" value="'+e.start+'" onchange="setE('+i+',\'start\',this.value)">'
+    +'<input type="time" value="'+e.end+'" onchange="setE('+i+',\'end\',this.value)">'
+    +'<select onchange="setE('+i+',\'biweekly\',this.value===\'2\')"><option value="1"'+(!e.biweekly?' selected':'')+'>هر هفته</option><option value="2"'+(e.biweekly?' selected':'')+'>هفته در میان</option></select>';
+    if(e.biweekly){
+      h+='<select onchange="setE('+i+',\'week\',this.value)">'+(e.anchor&&!e.week?'<option value="" selected>حفظ هفته فعلی ('+shortJ(iso2jdn(e.anchor))+')</option>':'')+'<option value="this"'+(e.week==='this'?' selected':'')+'>این هفته می‌آید</option><option value="next"'+(e.week==='next'?' selected':'')+'>هفته بعد می‌آید</option></select>';
+    }
+    h+='<button class="danger" onclick="delE('+i+')">حذف</button></div>';
+  });
+  h+='<button style="margin-bottom:10px" onclick="addE()">+ افزودن روز</button><button class="primary" onclick="saveDoc()">ذخیره پزشک</button>'+(df.id?'<button style="width:100%;margin-top:8px" onclick="df={id:null,first:\'\',last:\'\',schedule:[]};render()">انصراف از ویرایش</button>':'')+'</div>';
+  h+='<div class="card"><h2>پزشکان ثبت‌شده</h2>';
+  if(!db.doctors.length)h+='<p class="empty">هنوز پزشکی نیست.</p>';
+  db.doctors.forEach(d=>{h+='<div class="item"><b>'+esc(docName(d))+'</b><div class="muted">'+d.schedule.map(e=>DAYS[e.dow]+' '+fa(e.start)+'–'+fa(e.end)+(e.biweekly?' (هفته در میان)':'')).join('<br>')+'</div><div class="acts"><button onclick="editDoc(\''+d.id+'\')">ویرایش</button><button class="danger" onclick="delDoc(\''+d.id+'\')">حذف</button></div></div>'});
+  return h+'</div>';
+}
+function saveDoc(){
+  if(!df.first.trim()||!df.last.trim())return toast('نام و نام خانوادگی پزشک را وارد کن');
+  if(!df.schedule.length)return toast('حداقل یک روز حضور اضافه کن');
+  for(const e of df.schedule){if(!e.start||!e.end||t2m(e.end)-t2m(e.start)<SLOT)return toast('بازه هر روز باید حداقل ۴۵ دقیقه باشد')}
+  const sched=df.schedule.map(e=>{const x={dow:e.dow,start:e.start,end:e.end,biweekly:!!e.biweekly};if(x.biweekly){x.anchor=(e.week||!e.anchor)?computeAnchor({dow:e.dow,week:e.week||'this'}):e.anchor}return x});
+  const rec={id:df.id||uid(),first:df.first.trim(),last:df.last.trim(),schedule:sched};
+  if(df.id)db.doctors=db.doctors.map(d=>d.id===df.id?rec:d);else db.doctors.push(rec);
+  save();df={id:null,first:'',last:'',schedule:[]};render();toast('پزشک ذخیره شد');
+}
+function editDoc(id){const d=db.doctors.find(x=>x.id===id);df=JSON.parse(JSON.stringify(d));df.schedule.forEach(e=>{delete e.week});window.scrollTo(0,0);render()}
+function delDoc(id){if(!confirm('این پزشک حذف شود؟ نوبت‌های قبلی او می‌مانند.'))return;db.doctors=db.doctors.filter(d=>d.id!==id);if(bk.doc===id)bk.doc='';save();render()}
+
+// ---------- settings
+function viewSet(){
+  return'<div class="card"><h2>تنظیمات</h2><h3>نام کلینیک (انتهای پیامک)</h3><input value="'+esc(db.clinic)+'" oninput="db.clinic=this.value;save()">'
+  +'<h3>متن پیامک</h3><p class="muted">متغیرها: {name} {doctor} {date} {time} {clinic}</p><textarea oninput="db.tpl=this.value;save()">'+esc(db.tpl)+'</textarea>'
+  +'<button onclick="db.tpl=DEF_TPL;save();render()">بازگشت به متن پیش‌فرض</button></div>';
+}
+
+render();
+if('serviceWorker' in navigator&&!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform())&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
