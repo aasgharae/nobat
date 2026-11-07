@@ -105,7 +105,7 @@ let smsPlugin=null;
 async function sendSms(phone,text){
   const C=window.Capacitor;
   if(C&&C.isNativePlatform&&C.isNativePlatform()){
-    try{smsPlugin=smsPlugin||C.registerPlugin('SmsSender');await smsPlugin.send({phone,message:text});return'sent'}
+    try{smsPlugin=smsPlugin||(C.Plugins&&C.Plugins.SmsSender);if(!smsPlugin)return'error: پلاگین SMS پیدا نشد';await smsPlugin.send({phone,message:text});return'sent'}
     catch(e){return'error: '+((e&&e.message)||e)}
   }
   location.href='sms:'+phone+'?body='+encodeURIComponent(text);return'opened';
