@@ -33,7 +33,7 @@ button:disabled{opacity:.35}
 .acts{display:flex;gap:8px;margin-top:8px}
 .nav{display:flex;gap:8px;align-items:center;justify-content:space-between}
 nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#fff;border-top:1px solid #e2e8f0;padding-bottom:env(safe-area-inset-bottom)}
-nav button{flex:1;border-radius:0;background:#fff;padding:14px 4px;font-size:13px}
+nav button{flex:1;border-radius:0;background:#fff;padding:14px 2px;font-size:12px}
 nav button.on{color:#0f766e;font-weight:bold;border-top:3px solid #0f766e}
 #ov{position:fixed;inset:0;background:#0008;display:none;align-items:flex-end;z-index:20}
 #ov .sheet{background:#fff;width:100%;max-width:640px;margin:auto;border-radius:18px 18px 0 0;padding:18px}
@@ -46,6 +46,7 @@ nav button.on{color:#0f766e;font-weight:bold;border-top:3px solid #0f766e}
 <nav>
 <button data-t="book" onclick="go('book')">نوبت جدید</button>
 <button data-t="list" onclick="go('list')">نوبت‌ها</button>
+<button data-t="pat" onclick="go('pat')">بیماران</button>
 <button data-t="docs" onclick="go('docs')">پزشکان</button>
 <button data-t="set" onclick="go('set')">تنظیمات</button>
 </nav>
@@ -88,17 +89,18 @@ const DEF_TPL='{name} عزیز\nنوبت شما نزد {doctor} در {date} سا
 let db;
 try{db=JSON.parse(localStorage.getItem('nobat_db'))}catch(e){}
 db=db||{};db.doctors=db.doctors||[];db.appts=db.appts||[];db.clinic=db.clinic||'کلینیک';db.tpl=db.tpl||DEF_TPL;
-const save=()=>{try{localStorage.setItem('nobat_db',JSON.stringify(db))}catch(e){toast('ذخیره‌سازی ناموفق بود')}};
+const save=()=>{if(sq)return;try{localStorage.setItem('nobat_db',JSON.stringify(db))}catch(e){toast('ذخیره‌سازی ناموفق بود')}};
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const docName=d=>'دکتر '+d.first+' '+d.last;
 
 let tab='book',av=todayJdn();
 let bk={doc:'',j:null,time:null,first:'',last:'',nid:'',ins:'آزاد',phone:''};
 let df={id:null,first:'',last:'',schedule:[]};
+let bq='',pq='',pf=null,patients=[],sq=null;
 
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',3200)}
 function go(t){tab=t;render()}
-function render(){const y=window.scrollY;document.getElementById('app').innerHTML=tab==='book'?viewBook():tab==='list'?viewList():tab==='docs'?viewDocs():viewSet();document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));window.scrollTo(0,y)}
+function render(){if(!ready){document.getElementById('app').innerHTML='<div class="card empty">در حال بارگذاری…</div>';return}const y=window.scrollY;document.getElementById('app').innerHTML=tab==='book'?viewBook():tab==='list'?viewList():tab==='pat'?viewPat():tab==='docs'?viewDocs():viewSet();document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));window.scrollTo(0,y)}
 
 // ---------- SMS
 let smsPlugin=null;
@@ -120,7 +122,7 @@ function pickTime(t){bk.time=t;render()}
 function viewBook(){
   if(!db.doctors.length)return'<div class="card empty">هنوز پزشکی ثبت نشده. از تب «پزشکان» اضافه کن.</div>';
   const d=db.doctors.find(x=>x.id===bk.doc);
-  let h='<div class="card"><h2>مشخصات بیمار</h2>'
+  let h='<div class="card"><h2>جستجوی پرونده بیمار</h2><input placeholder="کد ملی، شماره تماس یا نام" value="'+esc(bq)+'" oninput="onBq(this.value)"><div id="bq-res">'+bqHtml()+'</div></div><div class="card"><h2>مشخصات بیمار</h2>'
   +'<input placeholder="نام" value="'+esc(bk.first)+'" oninput="bk.first=this.value">'
   +'<input placeholder="نام خانوادگی" value="'+esc(bk.last)+'" oninput="bk.last=this.value">'
   +'<input placeholder="کد ملی" inputmode="numeric" maxlength="10" value="'+esc(bk.nid)+'" oninput="bk.nid=this.value">'
@@ -157,10 +159,10 @@ async function finalize(){
   const d=db.doctors.find(x=>x.id===bk.doc),date=jdn2iso(bk.j);
   if(db.appts.some(a=>a.doc===d.id&&a.date===date&&a.time===bk.time)){closeOv();return toast('این ساعت همین الان پر شد')}
   const a={id:uid(),doc:d.id,doctorName:docName(d),date,time:bk.time,first:bk.first.trim(),last:bk.last.trim(),nid:en(bk.nid).trim(),ins:bk.ins,phone:normPhone(bk.phone),sms:''};
-  db.appts.push(a);save();closeOv();
+  db.appts.push(a);putAppt(a);closeOv();ensurePatient(a);
   av=bk.j;bk={doc:'',j:null,time:null,first:'',last:'',nid:'',ins:'آزاد',phone:''};
   tab='list';render();toast('نوبت ثبت شد');
-  a.sms=await sendSms(a.phone,smsText(a));save();render();toast(smsLabel(a.sms));
+  a.sms=await sendSms(a.phone,smsText(a));putAppt(a);render();toast(smsLabel(a.sms));
 }
 
 // ---------- list
@@ -172,8 +174,8 @@ function viewList(){
   L.forEach(a=>{h+='<div class="item"><b>'+fa(a.time)+'</b> — '+esc(a.first+' '+a.last)+'<div class="muted">'+esc(a.doctorName)+' | '+esc(a.ins)+' | '+fa(a.phone)+'<br>کد ملی: '+fa(a.nid)+' | '+smsLabel(a.sms)+'</div><div class="acts"><button onclick="resend(\''+a.id+'\')">ارسال مجدد پیامک</button><button class="danger" onclick="cancelAppt(\''+a.id+'\')">لغو نوبت</button></div></div>'});
   return h+'</div>';
 }
-async function resend(id){const a=db.appts.find(x=>x.id===id);if(!a)return;a.sms=await sendSms(a.phone,smsText(a));save();render();toast(smsLabel(a.sms))}
-function cancelAppt(id){if(!confirm('این نوبت لغو شود؟'))return;db.appts=db.appts.filter(x=>x.id!==id);save();render()}
+async function resend(id){const a=db.appts.find(x=>x.id===id);if(!a)return;a.sms=await sendSms(a.phone,smsText(a));putAppt(a);render();toast(smsLabel(a.sms))}
+function cancelAppt(id){if(!confirm('این نوبت لغو شود؟'))return;db.appts=db.appts.filter(x=>x.id!==id);delAppt(id);render()}
 
 // ---------- doctors
 function newE(){return{dow:0,start:'09:00',end:'13:00',biweekly:false,week:'this'}}
@@ -208,10 +210,10 @@ function saveDoc(){
   const sched=df.schedule.map(e=>{const x={dow:e.dow,start:e.start,end:e.end,biweekly:!!e.biweekly};if(x.biweekly){x.anchor=(e.week||!e.anchor)?computeAnchor({dow:e.dow,week:e.week||'this'}):e.anchor}return x});
   const rec={id:df.id||uid(),first:df.first.trim(),last:df.last.trim(),schedule:sched};
   if(df.id)db.doctors=db.doctors.map(d=>d.id===df.id?rec:d);else db.doctors.push(rec);
-  save();df={id:null,first:'',last:'',schedule:[]};render();toast('پزشک ذخیره شد');
+  putDoctor(rec);df={id:null,first:'',last:'',schedule:[]};render();toast('پزشک ذخیره شد');
 }
 function editDoc(id){const d=db.doctors.find(x=>x.id===id);df=JSON.parse(JSON.stringify(d));df.schedule.forEach(e=>{delete e.week});window.scrollTo(0,0);render()}
-function delDoc(id){if(!confirm('این پزشک حذف شود؟ نوبت‌های قبلی او می‌مانند.'))return;db.doctors=db.doctors.filter(d=>d.id!==id);if(bk.doc===id)bk.doc='';save();render()}
+function delDoc(id){if(!confirm('این پزشک حذف شود؟ نوبت‌های قبلی او می‌مانند.'))return;db.doctors=db.doctors.filter(d=>d.id!==id);if(bk.doc===id)bk.doc='';delDoctor(id);render()}
 
 // ---------- export (PDF / image)
 const b64=u=>{let s='';for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s)};
@@ -276,10 +278,10 @@ async function deliver(name,mime,data){
       const P=C.Plugins;
       const r=await P.Filesystem.writeFile({path:name,data,directory:'CACHE'});
       await P.Share.share({title:name,files:[r.uri],dialogTitle:'ذخیره یا ارسال فایل'});
-    }catch(e){const m=String((e&&e.message)||e);if(!/cancel/i.test(m))toast('خطا: '+m)}
-    return;
+      return true;
+    }catch(e){const m=String((e&&e.message)||e);if(!/cancel/i.test(m))toast('خطا: '+m);return false}
   }
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([fromB64(data)],{type:mime}));a.download=name;document.body.appendChild(a);a.click();a.remove();
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([fromB64(data)],{type:mime}));a.download=name;document.body.appendChild(a);a.click();a.remove();return true;
 }
 async function exportDay(kind){
   const r=renderPages(av);
@@ -296,14 +298,193 @@ async function exportDay(kind){
   }
 }
 
-// ---------- settings
-function viewSet(){
-  return'<div class="card"><h2>تنظیمات</h2><h3>نام کلینیک (انتهای پیامک)</h3><input value="'+esc(db.clinic)+'" oninput="db.clinic=this.value;save()">'
-  +'<h3>متن پیامک</h3><p class="muted">متغیرها: {name} {doctor} {date} {time} {clinic}</p><textarea oninput="db.tpl=this.value;save()">'+esc(db.tpl)+'</textarea>'
-  +'<button onclick="db.tpl=DEF_TPL;save();render()">بازگشت به متن پیش‌فرض</button></div>';
+// ---------- patient records (SQLite on the phone)
+const DBN='nobat';
+const nz=s=>en(s).replace(/ي/g,'ی').replace(/ك/g,'ک').toLowerCase();
+let ready=false;
+const SCHEMA='CREATE TABLE IF NOT EXISTS patients(id TEXT PRIMARY KEY,fname TEXT NOT NULL,lname TEXT NOT NULL,nid TEXT UNIQUE NOT NULL,phone TEXT,ins TEXT,created TEXT);'
++'CREATE TABLE IF NOT EXISTS doctors(id TEXT PRIMARY KEY,fname TEXT NOT NULL,lname TEXT NOT NULL,schedule TEXT NOT NULL);'
++'CREATE TABLE IF NOT EXISTS appts(id TEXT PRIMARY KEY,doc TEXT NOT NULL,doctor_name TEXT,date TEXT NOT NULL,time TEXT NOT NULL,fname TEXT,lname TEXT,nid TEXT,ins TEXT,phone TEXT,sms TEXT);'
++'CREATE UNIQUE INDEX IF NOT EXISTS ux_slot ON appts(doc,date,time);'
++'CREATE INDEX IF NOT EXISTS ix_appts_date ON appts(date);'
++'CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT);';
+const APPT_UP='INSERT INTO appts(id,doc,doctor_name,date,time,fname,lname,nid,ins,phone,sms) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc,doctor_name=excluded.doctor_name,date=excluded.date,time=excluded.time,fname=excluded.fname,lname=excluded.lname,nid=excluded.nid,ins=excluded.ins,phone=excluded.phone,sms=excluded.sms';
+const PAT_UP='INSERT INTO patients(id,fname,lname,nid,phone,ins,created) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET fname=excluded.fname,lname=excluded.lname,nid=excluded.nid,phone=excluded.phone,ins=excluded.ins';
+const apptVals=a=>[a.id,a.doc,a.doctorName||'',a.date,a.time,a.first||'',a.last||'',a.nid||'',a.ins||'',a.phone||'',a.sms||''];
+const patVals=p=>[p.id,p.fname,p.lname,p.nid,p.phone||'',p.ins||'',p.created||''];
+const sql=(statement,values)=>sq.run({database:DBN,readonly:false,transaction:true,statement,values:values||[]});
+const qry=async(statement,values)=>{const r=await sq.query({database:DBN,statement,values:values||[]});return r.values||[]};
+const fail=e=>toast('ذخیره ناموفق بود: '+((e&&e.message)||e));
+async function putAppt(a){try{if(sq)await sql(APPT_UP,apptVals(a));else save()}catch(e){fail(e)}}
+async function delAppt(id){try{if(sq)await sql('DELETE FROM appts WHERE id=?',[id]);else save()}catch(e){fail(e)}}
+async function putDoctor(d){try{if(sq)await sql('INSERT OR REPLACE INTO doctors(id,fname,lname,schedule) VALUES(?,?,?,?)',[d.id,d.first,d.last,JSON.stringify(d.schedule)]);else save()}catch(e){fail(e)}}
+async function delDoctor(id){try{if(sq)await sql('DELETE FROM doctors WHERE id=?',[id]);else save()}catch(e){fail(e)}}
+async function putSetting(k,v){try{if(sq)await sql('INSERT OR REPLACE INTO settings(k,v) VALUES(?,?)',[k,String(v)]);else save()}catch(e){fail(e)}}
+async function persistPatient(p){if(sq)await sql(PAT_UP,patVals(p));else localStorage.setItem('nobat_patients',JSON.stringify(patients))}
+async function removePatientRow(id){if(sq)await sql('DELETE FROM patients WHERE id=?',[id]);else localStorage.setItem('nobat_patients',JSON.stringify(patients))}
+async function loadAll(){
+  const S={};(await qry('SELECT k,v FROM settings')).forEach(r=>S[r.k]=r.v);
+  db.clinic=S.clinic||'کلینیک';db.tpl=S.tpl||DEF_TPL;db.lastBackup=S.lastBackup||'';
+  db.doctors=(await qry('SELECT * FROM doctors ORDER BY lname,fname')).map(r=>{let sc=[];try{sc=JSON.parse(r.schedule)}catch(e){}return{id:r.id,first:r.fname,last:r.lname,schedule:sc}});
+  db.appts=(await qry('SELECT * FROM appts')).map(r=>({id:r.id,doc:r.doc,doctorName:r.doctor_name,date:r.date,time:r.time,first:r.fname,last:r.lname,nid:r.nid,ins:r.ins,phone:r.phone,sms:r.sms||''}));
+  patients=await qry('SELECT * FROM patients ORDER BY lname,fname');
+}
+async function migrateLocal(){
+  for(const d of db.doctors)await sql('INSERT OR IGNORE INTO doctors(id,fname,lname,schedule) VALUES(?,?,?,?)',[d.id,d.first,d.last,JSON.stringify(d.schedule)]);
+  for(const a of db.appts)await sql(APPT_UP.replace('INSERT INTO','INSERT OR IGNORE INTO').replace(/ ON CONFLICT.*$/,''),apptVals(a));
+  let ps=[];try{ps=JSON.parse(localStorage.getItem('nobat_patients'))||[]}catch(e){}
+  for(const p of ps)await sql('INSERT OR IGNORE INTO patients(id,fname,lname,nid,phone,ins,created) VALUES(?,?,?,?,?,?,?)',patVals(p));
+  for(const a of db.appts)if(a.nid)await sql('INSERT OR IGNORE INTO patients(id,fname,lname,nid,phone,ins,created) VALUES(?,?,?,?,?,?,?)',[uid(),a.first,a.last,a.nid,a.phone||'',a.ins||'',new Date().toISOString()]);
+  await putSetting('clinic',db.clinic);await putSetting('tpl',db.tpl);
+}
+function loadLocal(){
+  try{patients=JSON.parse(localStorage.getItem('nobat_patients'))||[]}catch(x){patients=[]}
+  if(!db.seeded){
+    for(const a of db.appts)if(a.nid&&!patients.some(x=>x.nid===a.nid))patients.push({id:uid(),fname:a.first,lname:a.last,nid:a.nid,phone:a.phone,ins:a.ins,created:new Date().toISOString()});
+    db.seeded=true;try{localStorage.setItem('nobat_patients',JSON.stringify(patients))}catch(e){}
+    save();
+  }
+}
+async function initStore(){
+  const C=window.Capacitor;
+  if(C&&C.isNativePlatform&&C.isNativePlatform()&&C.Plugins&&C.Plugins.CapacitorSQLite){
+    try{
+      sq=C.Plugins.CapacitorSQLite;
+      try{await sq.createConnection({database:DBN,version:1,encrypted:false,mode:'no-encryption',readonly:false})}catch(e){}
+      try{await sq.open({database:DBN,readonly:false})}catch(e){}
+      await sq.execute({database:DBN,readonly:false,transaction:true,statements:SCHEMA});
+      const m=await qry("SELECT v FROM settings WHERE k='migrated'");
+      if(!m.length){await migrateLocal();await putSetting('migrated','1')}
+      await loadAll();
+    }catch(e){
+      sq=null;loadLocal();
+      toast('SQLite کار نکرد، موقتاً روش ساده: '+((e&&e.message)||e));
+    }
+  }else loadLocal();
+}
+async function ensurePatient(a){
+  try{
+    let p=patients.find(x=>x.nid===a.nid);
+    if(p){if(p.phone!==a.phone||p.ins!==a.ins){p.phone=a.phone;p.ins=a.ins;await persistPatient(p)}}
+    else{p={id:uid(),fname:a.first,lname:a.last,nid:a.nid,phone:a.phone,ins:a.ins,created:new Date().toISOString()};patients.push(p);await persistPatient(p)}
+  }catch(e){toast('ذخیره پرونده ناموفق بود: '+((e&&e.message)||e))}
+}
+function findPatients(q){
+  q=nz(q).trim();
+  if(!q)return patients.slice().sort((a,b)=>(a.lname+a.fname).localeCompare(b.lname+b.fname,'fa')).slice(0,30);
+  const dg=q.replace(/\D/g,'');
+  const numeric=dg.length>=3&&dg.length===q.replace(/[\s\-+]/g,'').length;
+  return patients.filter(p=>numeric?(p.nid.includes(dg)||(p.phone||'').includes(dg)):nz(p.fname+' '+p.lname).includes(q)).slice(0,30);
+}
+function patLine(p){return esc(p.fname+' '+p.lname)+'<div class="muted">کد ملی: '+fa(p.nid)+' | '+fa(p.phone||'-')+' | '+esc(p.ins||'')+'</div>'}
+function bqHtml(){
+  if(!bq.trim())return'';
+  const r=findPatients(bq).slice(0,5);
+  if(!r.length)return'<p class="muted">پرونده‌ای پیدا نشد. مشخصات رو پایین وارد کن؛ بعد از ثبت نوبت، پرونده خودکار ساخته میشه.</p>';
+  return r.map(p=>'<div class="item">'+patLine(p)+'<div class="acts"><button class="primary" style="padding:9px" onclick="pickPatient(\''+p.id+'\')">انتخاب برای نوبت</button></div></div>').join('');
+}
+function onBq(v){bq=v;const e=document.getElementById('bq-res');if(e)e.innerHTML=bqHtml()}
+function pickPatient(id){
+  const p=patients.find(x=>x.id===id);if(!p)return;
+  bk.first=p.fname;bk.last=p.lname;bk.nid=p.nid;bk.phone=p.phone||'';bk.ins=p.ins||'آزاد';bq='';
+  tab='book';render();window.scrollTo(0,0);toast('مشخصات پر شد؛ پزشک و زمان رو انتخاب کن');
+}
+function pqHtml(){
+  const r=findPatients(pq);
+  if(!r.length)return'<p class="empty">پرونده‌ای پیدا نشد.</p>';
+  return r.map(p=>{const n=db.appts.filter(a=>a.nid===p.nid).length;return'<div class="item"><b>'+patLine(p)+'</b><div class="muted">تعداد نوبت‌ها: '+fa(n)+'</div><div class="acts"><button class="primary" style="width:auto;padding:9px 14px" onclick="pickPatient(\''+p.id+'\')">ثبت نوبت</button><button onclick="editPat(\''+p.id+'\')">ویرایش</button><button class="danger" onclick="delPat(\''+p.id+'\')">حذف</button></div></div>'}).join('');
+}
+function onPq(v){pq=v;const e=document.getElementById('pq-res');if(e)e.innerHTML=pqHtml()}
+function viewPat(){
+  let h='';
+  if(pf){
+    h+='<div class="card"><h2>'+(pf.id?'ویرایش پرونده':'پرونده جدید')+'</h2>'
+    +'<input placeholder="نام" value="'+esc(pf.fname)+'" oninput="pf.fname=this.value">'
+    +'<input placeholder="نام خانوادگی" value="'+esc(pf.lname)+'" oninput="pf.lname=this.value">'
+    +'<input placeholder="کد ملی" inputmode="numeric" maxlength="10" value="'+esc(pf.nid)+'" oninput="pf.nid=this.value">'
+    +'<select onchange="pf.ins=this.value"><option'+(pf.ins==='آزاد'?' selected':'')+'>آزاد</option><option'+(pf.ins==='نیروهای مسلح'?' selected':'')+'>نیروهای مسلح</option></select>'
+    +'<input placeholder="شماره تماس" type="tel" inputmode="tel" value="'+esc(pf.phone)+'" oninput="pf.phone=this.value">'
+    +'<button class="primary" onclick="savePat()">ذخیره پرونده</button><button style="width:100%;margin-top:8px" onclick="pf=null;render()">انصراف</button></div>';
+  }
+  h+='<div class="card"><h2>پرونده بیماران ('+fa(patients.length)+')</h2><input placeholder="جستجو با کد ملی، شماره تماس یا نام" value="'+esc(pq)+'" oninput="onPq(this.value)"><button style="width:100%;margin-bottom:8px" onclick="newPat()">+ بیمار جدید</button><div id="pq-res">'+pqHtml()+'</div></div>';
+  return h;
+}
+function newPat(){pf={id:null,fname:'',lname:'',nid:'',ins:'آزاد',phone:''};render();window.scrollTo(0,0)}
+function editPat(id){const p=patients.find(x=>x.id===id);if(!p)return;pf={...p,phone:p.phone||'',ins:p.ins||'آزاد'};render();window.scrollTo(0,0)}
+async function savePat(){
+  const nid=en(pf.nid).trim(),phone=normPhone(pf.phone);
+  if(!pf.fname.trim()||!pf.lname.trim())return toast('نام و نام خانوادگی را وارد کن');
+  if(!nidOk(nid))return toast('کد ملی معتبر نیست');
+  if(!phone)return toast('شماره تماس معتبر نیست');
+  if(patients.some(x=>x.nid===nid&&x.id!==pf.id))return toast('این کد ملی قبلاً ثبت شده');
+  const p={id:pf.id||uid(),fname:pf.fname.trim(),lname:pf.lname.trim(),nid,phone,ins:pf.ins,created:pf.created||new Date().toISOString()};
+  try{
+    const old=pf.id?patients.findIndex(x=>x.id===pf.id):-1;
+    if(old>=0)patients[old]=p;else patients.push(p);
+    await persistPatient(p);
+  }catch(e){return toast('ذخیره ناموفق: '+((e&&e.message)||e))}
+  pf=null;render();toast('پرونده ذخیره شد');
+}
+async function delPat(id){
+  if(!confirm('این پرونده حذف شود؟ نوبت‌های قبلی می‌مانند.'))return;
+  try{patients=patients.filter(x=>x.id!==id);await removePatientRow(id)}catch(e){toast('حذف ناموفق: '+((e&&e.message)||e))}
+  render();
 }
 
-render();
+// ---------- backup / restore
+const daysSinceBackup=()=>db.lastBackup?Math.floor((Date.now()-new Date(db.lastBackup).getTime())/864e5):null;
+const bkText=()=>{const d=daysSinceBackup();if(d===null)return'هنوز بکاپ نگرفته‌ای';const t=new Date(db.lastBackup);return'آخرین بکاپ: '+fullJ(g2d(t.getFullYear(),t.getMonth()+1,t.getDate()))+(d>=7?' ('+fa(d)+' روز پیش)':'')};
+function nagBackup(){if(!db.appts.length&&!patients.length)return;const d=daysSinceBackup();if(d===null||d>=7)toast('مدتیه بکاپ نگرفتی؛ از تب تنظیمات بکاپ بگیر')}
+async function makeBackup(){
+  const data={app:'nobat',v:1,created:new Date().toISOString(),clinic:db.clinic,tpl:db.tpl,doctors:db.doctors,appts:db.appts,patients};
+  const t=new Date(),p2=n=>String(n).padStart(2,'0');
+  const name='nobat-backup-'+t.getFullYear()+p2(t.getMonth()+1)+p2(t.getDate())+'-'+p2(t.getHours())+p2(t.getMinutes())+'.json';
+  const ok=await deliver(name,'application/json',b64(new TextEncoder().encode(JSON.stringify(data))));
+  if(ok){db.lastBackup=t.toISOString();await putSetting('lastBackup',db.lastBackup);render()}
+}
+function restorePick(inp){
+  const f=inp.files&&inp.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{inp.value='';restoreData(String(r.result))};
+  r.onerror=()=>toast('خواندن فایل ناموفق بود');
+  r.readAsText(f);
+}
+async function restoreData(txt){
+  let d;try{d=JSON.parse(txt)}catch(e){return toast('فایل بکاپ معتبر نیست')}
+  if(!d||d.app!=='nobat'||!Array.isArray(d.doctors)||!Array.isArray(d.appts)||!Array.isArray(d.patients))return toast('این فایل بکاپ این اپ نیست');
+  const docs=d.doctors.filter(x=>x&&x.id&&Array.isArray(x.schedule));
+  const apps=d.appts.filter(x=>x&&x.id&&x.doc&&x.date&&x.time);
+  const pats=d.patients.filter(x=>x&&x.id&&x.nid);
+  if(!confirm('همه اطلاعات فعلی پاک و با بکاپ جایگزین میشه:\n'+fa(docs.length)+' پزشک، '+fa(apps.length)+' نوبت، '+fa(pats.length)+' پرونده.\nادامه بدم؟'))return;
+  try{
+    if(sq){
+      await sql('DELETE FROM appts');await sql('DELETE FROM doctors');await sql('DELETE FROM patients');
+      for(const x of docs)await sql('INSERT OR REPLACE INTO doctors(id,fname,lname,schedule) VALUES(?,?,?,?)',[x.id,x.first,x.last,JSON.stringify(x.schedule)]);
+      for(const x of pats)await sql('INSERT OR IGNORE INTO patients(id,fname,lname,nid,phone,ins,created) VALUES(?,?,?,?,?,?,?)',patVals(x));
+      for(const x of apps)await sql('INSERT OR IGNORE INTO appts(id,doc,doctor_name,date,time,fname,lname,nid,ins,phone,sms) VALUES(?,?,?,?,?,?,?,?,?,?,?)',apptVals(x));
+      if(d.clinic)await putSetting('clinic',d.clinic);
+      if(d.tpl)await putSetting('tpl',d.tpl);
+      await loadAll();
+    }else{
+      db.doctors=docs;db.appts=apps;patients=pats;if(d.clinic)db.clinic=d.clinic;if(d.tpl)db.tpl=d.tpl;
+      save();localStorage.setItem('nobat_patients',JSON.stringify(patients));
+    }
+  }catch(e){toast('بازیابی ناموفق: '+((e&&e.message)||e));if(sq){try{await loadAll()}catch(x){}}render();return}
+  bk.doc='';bk.j=null;bk.time=null;render();toast('بازیابی انجام شد');
+}
+
+// ---------- settings
+function viewSet(){
+  return'<div class="card"><h2>تنظیمات</h2><h3>نام کلینیک (انتهای پیامک)</h3><input value="'+esc(db.clinic)+'" oninput="db.clinic=this.value;putSetting(\'clinic\',db.clinic)">'
+  +'<h3>متن پیامک</h3><p class="muted">متغیرها: {name} {doctor} {date} {time} {clinic}</p><textarea oninput="db.tpl=this.value;putSetting(\'tpl\',db.tpl)">'+esc(db.tpl)+'</textarea>'
+  +'<button onclick="db.tpl=DEF_TPL;putSetting(\'tpl\',db.tpl);render()">بازگشت به متن پیش‌فرض</button></div>'
+  +'<div class="card"><h2>بکاپ و بازیابی</h2><p class="muted">'+bkText()+'</p><p class="muted">بکاپ شامل پزشکان، نوبت‌ها و پرونده بیماران است. فایل رو جای امن نگه دار (واتساپ به خودت، گوگل درایو، کامپیوتر).</p>'
+  +'<button class="primary" onclick="makeBackup()">گرفتن بکاپ</button>'
+  +'<button style="width:100%;margin-top:8px" onclick="document.getElementById(\'rf\').click()">بازیابی از فایل بکاپ</button>'
+  +'<input id="rf" type="file" style="display:none" onchange="restorePick(this)"></div>';
+}
+
+render();initStore().then(()=>{ready=true;render();nagBackup()});
 if('serviceWorker' in navigator&&!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform())&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
 </body>
