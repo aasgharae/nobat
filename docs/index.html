@@ -432,45 +432,62 @@ async function delPat(id){
 }
 
 // ---------- backup / restore
+// ---------- backup / restore (SQLite file)
 const daysSinceBackup=()=>db.lastBackup?Math.floor((Date.now()-new Date(db.lastBackup).getTime())/864e5):null;
 const bkText=()=>{const d=daysSinceBackup();if(d===null)return'هنوز بکاپ نگرفته‌ای';const t=new Date(db.lastBackup);return'آخرین بکاپ: '+fullJ(g2d(t.getFullYear(),t.getMonth()+1,t.getDate()))+(d>=7?' ('+fa(d)+' روز پیش)':'')};
-function nagBackup(){if(!db.appts.length&&!patients.length)return;const d=daysSinceBackup();if(d===null||d>=7)toast('مدتیه بکاپ نگرفتی؛ از تب تنظیمات بکاپ بگیر')}
+function nagBackup(){if(!sq)return;if(!db.appts.length&&!patients.length)return;const d=daysSinceBackup();if(d===null||d>=7)toast('مدتیه بکاپ نگرفتی؛ از تب تنظیمات بکاپ بگیر')}
+const noTx=statements=>sq.execute({database:DBN,readonly:false,transaction:false,statements});
+const q1=s=>String(s).replace(/'/g,"''");
+async function cacheFile(name){
+  const u=(await window.Capacitor.Plugins.Filesystem.getUri({path:name,directory:'CACHE'})).uri;
+  return{uri:u,abs:decodeURIComponent(u.replace(/^file:\/\//,''))};
+}
 async function makeBackup(){
-  const data={app:'nobat',v:1,created:new Date().toISOString(),clinic:db.clinic,tpl:db.tpl,doctors:db.doctors,appts:db.appts,patients};
-  const t=new Date(),p2=n=>String(n).padStart(2,'0');
-  const name='nobat-backup-'+t.getFullYear()+p2(t.getMonth()+1)+p2(t.getDate())+'-'+p2(t.getHours())+p2(t.getMinutes())+'.json';
-  const ok=await deliver(name,'application/json',b64(new TextEncoder().encode(JSON.stringify(data))));
-  if(ok){db.lastBackup=t.toISOString();await putSetting('lastBackup',db.lastBackup);render()}
+  if(!sq)return toast('بکاپ SQLite فقط تو نسخه APK کار می‌کنه');
+  const P=window.Capacitor.Plugins,t=new Date(),p2=n=>String(n).padStart(2,'0');
+  const name='nobat-backup-'+t.getFullYear()+p2(t.getMonth()+1)+p2(t.getDate())+'-'+p2(t.getHours())+p2(t.getMinutes())+'.db';
+  try{
+    const f=await cacheFile(name);
+    try{await P.Filesystem.deleteFile({path:name,directory:'CACHE'})}catch(e){}
+    await noTx("VACUUM INTO '"+q1(f.abs)+"'");
+    await P.Share.share({title:name,files:[f.uri],dialogTitle:'ذخیره یا ارسال بکاپ'});
+    db.lastBackup=t.toISOString();await putSetting('lastBackup',db.lastBackup);render();
+  }catch(e){const m=String((e&&e.message)||e);if(!/cancel/i.test(m))toast('بکاپ ناموفق: '+m)}
 }
 function restorePick(inp){
   const f=inp.files&&inp.files[0];if(!f)return;
+  if(!sq){inp.value='';return toast('بازیابی SQLite فقط تو نسخه APK کار می‌کنه')}
   const r=new FileReader();
-  r.onload=()=>{inp.value='';restoreData(String(r.result))};
+  r.onload=()=>{inp.value='';restoreDb(String(r.result).split(',')[1]||'')};
   r.onerror=()=>toast('خواندن فایل ناموفق بود');
-  r.readAsText(f);
+  r.readAsDataURL(f);
 }
-async function restoreData(txt){
-  let d;try{d=JSON.parse(txt)}catch(e){return toast('فایل بکاپ معتبر نیست')}
-  if(!d||d.app!=='nobat'||!Array.isArray(d.doctors)||!Array.isArray(d.appts)||!Array.isArray(d.patients))return toast('این فایل بکاپ این اپ نیست');
-  const docs=d.doctors.filter(x=>x&&x.id&&Array.isArray(x.schedule));
-  const apps=d.appts.filter(x=>x&&x.id&&x.doc&&x.date&&x.time);
-  const pats=d.patients.filter(x=>x&&x.id&&x.nid);
-  if(!confirm('همه اطلاعات فعلی پاک و با بکاپ جایگزین میشه:\n'+fa(docs.length)+' پزشک، '+fa(apps.length)+' نوبت، '+fa(pats.length)+' پرونده.\nادامه بدم؟'))return;
+async function restoreDb(data){
+  let head='';try{head=atob(data.slice(0,24))}catch(e){}
+  if(head.indexOf('SQLite format 3')!==0)return toast('این فایل بکاپ SQLite نیست');
+  const P=window.Capacitor.Plugins,name='restore-temp.db';let attached=false;
   try{
-    if(sq){
-      await sql('DELETE FROM appts');await sql('DELETE FROM doctors');await sql('DELETE FROM patients');
-      for(const x of docs)await sql('INSERT OR REPLACE INTO doctors(id,fname,lname,schedule) VALUES(?,?,?,?)',[x.id,x.first,x.last,JSON.stringify(x.schedule)]);
-      for(const x of pats)await sql('INSERT OR IGNORE INTO patients(id,fname,lname,nid,phone,ins,created) VALUES(?,?,?,?,?,?,?)',patVals(x));
-      for(const x of apps)await sql('INSERT OR IGNORE INTO appts(id,doc,doctor_name,date,time,fname,lname,nid,ins,phone,sms) VALUES(?,?,?,?,?,?,?,?,?,?,?)',apptVals(x));
-      if(d.clinic)await putSetting('clinic',d.clinic);
-      if(d.tpl)await putSetting('tpl',d.tpl);
-      await loadAll();
-    }else{
-      db.doctors=docs;db.appts=apps;patients=pats;if(d.clinic)db.clinic=d.clinic;if(d.tpl)db.tpl=d.tpl;
-      save();localStorage.setItem('nobat_patients',JSON.stringify(patients));
-    }
-  }catch(e){toast('بازیابی ناموفق: '+((e&&e.message)||e));if(sq){try{await loadAll()}catch(x){}}render();return}
-  bk.doc='';bk.j=null;bk.time=null;render();toast('بازیابی انجام شد');
+    await P.Filesystem.writeFile({path:name,data,directory:'CACHE'});
+    const f=await cacheFile(name);
+    await noTx("ATTACH DATABASE '"+q1(f.abs)+"' AS bk");attached=true;
+    const have=await qry("SELECT name FROM bk.sqlite_master WHERE type='table' AND name IN ('patients','doctors','appts','settings')");
+    if(have.length<4)throw new Error('ساختار این بکاپ با اپ نمی‌خونه');
+    const c=(await qry('SELECT (SELECT count(*) FROM bk.doctors) d,(SELECT count(*) FROM bk.appts) a,(SELECT count(*) FROM bk.patients) p'))[0];
+    if(!confirm('همه اطلاعات فعلی پاک و با بکاپ جایگزین میشه:\n'+fa(c.d)+' پزشک، '+fa(c.a)+' نوبت، '+fa(c.p)+' پرونده.\nادامه بدم؟'))return;
+    await sq.execute({database:DBN,readonly:false,transaction:true,statements:
+      'DELETE FROM appts;DELETE FROM doctors;DELETE FROM patients;'
+      +'INSERT OR IGNORE INTO doctors(id,fname,lname,schedule) SELECT id,fname,lname,schedule FROM bk.doctors;'
+      +'INSERT OR IGNORE INTO patients(id,fname,lname,nid,phone,ins,created) SELECT id,fname,lname,nid,phone,ins,created FROM bk.patients;'
+      +'INSERT OR IGNORE INTO appts(id,doc,doctor_name,date,time,fname,lname,nid,ins,phone,sms) SELECT id,doc,doctor_name,date,time,fname,lname,nid,ins,phone,sms FROM bk.appts;'
+      +"INSERT OR REPLACE INTO settings(k,v) SELECT k,v FROM bk.settings WHERE k IN ('clinic','tpl');"});
+    await loadAll();
+    bk.doc='';bk.j=null;bk.time=null;toast('بازیابی انجام شد');
+  }catch(e){toast('بازیابی ناموفق: '+((e&&e.message)||e))}
+  finally{
+    if(attached){try{await noTx('DETACH DATABASE bk')}catch(e){}}
+    try{await P.Filesystem.deleteFile({path:name,directory:'CACHE'})}catch(e){}
+    render();
+  }
 }
 
 // ---------- settings
@@ -478,7 +495,7 @@ function viewSet(){
   return'<div class="card"><h2>تنظیمات</h2><h3>نام کلینیک (انتهای پیامک)</h3><input value="'+esc(db.clinic)+'" oninput="db.clinic=this.value;putSetting(\'clinic\',db.clinic)">'
   +'<h3>متن پیامک</h3><p class="muted">متغیرها: {name} {doctor} {date} {time} {clinic}</p><textarea oninput="db.tpl=this.value;putSetting(\'tpl\',db.tpl)">'+esc(db.tpl)+'</textarea>'
   +'<button onclick="db.tpl=DEF_TPL;putSetting(\'tpl\',db.tpl);render()">بازگشت به متن پیش‌فرض</button></div>'
-  +'<div class="card"><h2>بکاپ و بازیابی</h2><p class="muted">'+bkText()+'</p><p class="muted">بکاپ شامل پزشکان، نوبت‌ها و پرونده بیماران است. فایل رو جای امن نگه دار (واتساپ به خودت، گوگل درایو، کامپیوتر).</p>'
+  +'<div class="card"><h2>بکاپ و بازیابی (SQLite)</h2><p class="muted">'+bkText()+'</p><p class="muted">بکاپ یه فایل دیتابیس با پسوند db است و شامل پزشکان، نوبت‌ها و پرونده بیماران میشه. فایل رو جای امن نگه دار (واتساپ به خودت، گوگل درایو، کامپیوتر).</p>'
   +'<button class="primary" onclick="makeBackup()">گرفتن بکاپ</button>'
   +'<button style="width:100%;margin-top:8px" onclick="document.getElementById(\'rf\').click()">بازیابی از فایل بکاپ</button>'
   +'<input id="rf" type="file" style="display:none" onchange="restorePick(this)"></div>';
